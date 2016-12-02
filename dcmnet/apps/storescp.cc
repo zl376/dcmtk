@@ -120,7 +120,9 @@ static OFCondition echoSCP(T_ASC_Association * assoc, T_DIMSE_Message * msg, T_A
 static OFCondition storeSCP(T_ASC_Association * assoc, T_DIMSE_Message * msg, T_ASC_PresentationContextID presID);
 static void executeOnReception();
 static void executeEndOfStudyEvents();
+static void executeStartOfStudyEvents();
 static void executeOnEndOfStudy();
+static void executeOnStartOfStudy();
 static void renameOnEndOfStudy();
 static OFString replaceChars( const OFString &srcstr, const OFString &pattern, const OFString &substitute );
 static void executeCommand( const OFString &cmd );
@@ -185,8 +187,10 @@ OFString           subdirectoryPathAndName;
 OFList<OFString>   outputFileNameArray;
 static const char *opt_execOnReception = NULL;        // default: don't execute anything on reception
 static const char *opt_execOnEndOfStudy = NULL;       // default: don't execute anything on end of study
+static const char *opt_execOnStartOfStudy = NULL;     // default: don't execute anything on start of study
 
 OFString           lastStudySubdirectoryPathAndName;
+OFString           nextStudySubdirectoryPathAndName;
 static OFBool      opt_renameOnEndOfStudy = OFFalse;  // default: don't rename any files on end of study
 static long        opt_endOfStudyTimeout = -1;        // default: no end of study timeout
 static OFBool      endOfStudyThroughTimeoutEvent = OFFalse;
@@ -405,6 +409,8 @@ int main(int argc, char *argv[])
                                                            "execute command c after having received and\nprocessed one C-STORE-RQ message");
     cmd.addOption("--exec-on-eostudy",          "-xcs", 1, "[c]ommand: string",
                                                            "execute command c after having received and\nprocessed all C-STORE-RQ messages that belong\nto one study");
+    cmd.addOption("--exec-on-sostudy",          "-xcss", 1, "[c]ommand: string",
+                                                           "execute command c before receiving or\nprocessing any C-STORE-RQ message that belongs\nto a new study");    
     cmd.addOption("--rename-on-eostudy",        "-rns",    "having received and processed all C-STORE-RQ\nmessages that belong to one study, rename\noutput files according to certain pattern");
     cmd.addOption("--eostudy-timeout",          "-tos", 1, "[t]imeout: integer",
                                                            "specifies a timeout of t seconds for\nend-of-study determination");
@@ -863,6 +869,15 @@ int main(int argc, char *argv[])
       app.checkDependence("--exec-on-eostudy", "--sort-conc-studies, --sort-on-study-uid or --sort-on-patientname", opt_sortStudyMode != ESM_None );
       app.checkValue(cmd.getValue(opt_execOnEndOfStudy));
     }
+
+    if (cmd.findOption("--exec-on-sostudy"))
+    {
+#ifdef _WIN32
+      app.checkConflict("--exec-on-sostudy", "--fork on Windows systems (probably)", opt_forkMode);
+#endif
+      app.checkDependence("--exec-on-sostudy", "--sort-conc-studies, --sort-on-study-uid or --sort-on-patientname", opt_sortStudyMode != ESM_None );
+      app.checkValue(cmd.getValue(opt_execOnStartOfStudy));
+    }    
 
     if (cmd.findOption("--rename-on-eostudy"))
     {
@@ -1999,6 +2014,12 @@ storeSCPCallback(
           // create subdirectoryPathAndName (string with full path to new subdirectory)
           OFStandard::combineDirAndFilename(subdirectoryPathAndName, OFStandard::getDirNameFromPath(tmpStr, cbdata->imageFileName), subdirectoryName);
 
+          /* if currentStudyInstanceUID is non-empty, this indicates that a new study was received. We need to set a certain indicator variable (nextStudySubdirectoryPathAndName),
+           * so that we know that executeOnStartOfStudy() needs to be executed. 
+           ==== by Zhe Liu, 2016/12/1 ==== */
+          if (!currentStudyInstanceUID.empty())
+            nextStudySubdirectoryPathAndName = subdirectoryPathAndName;
+          
           // check if the subdirectory already exists
           // if it already exists dump a warning
           if( OFStandard::dirExists(subdirectoryPathAndName) )
@@ -2284,6 +2305,10 @@ static OFCondition storeSCP(
   if( cond.good() )
     executeEndOfStudyEvents();
 
+  // if everything was successful so far, go ahead and handle possible start-of-study events
+  if( cond.good() )
+    executeStartOfStudyEvents();
+
   // if opt_sleepAfter is set, the user requires that the application shall
   // sleep a certain amount of seconds after storing the instance data.
   if (opt_sleepAfter > 0)
@@ -2322,6 +2347,28 @@ static void executeEndOfStudyEvents()
     executeOnEndOfStudy();
 
   lastStudySubdirectoryPathAndName.clear();
+}
+
+
+static void executeStartOfStudyEvents()
+    /* 
+     * This function deals with the execution of start-of-study-events. In detail,
+     * events that need to take place are specified by the user through certain
+     * command line options. The options that define these start-of-study-events
+     * are "--exec-on-sostudy".
+     *
+     * Parameters:
+     *   none.
+     ==== by Zhe Liu, 2016/12/1 ==== */
+{
+  // if option --exec-on-sostudy is set and variable nextStudySubdirectoryPathAndName does
+  // not equal NULL (i.e. we received some object that belongs to a new study, or - in other
+  // words - it is the start of one study) we want to execute a certain command which was
+  // passed to the application
+  if( opt_execOnStartOfStudy != NULL && !nextStudySubdirectoryPathAndName.empty() )
+    executeOnStartOfStudy();
+
+  nextStudySubdirectoryPathAndName.clear();
 }
 
 
@@ -2475,6 +2522,38 @@ static void executeOnEndOfStudy()
 
   // perform substitution for placeholder #r
   cmd = replaceChars( cmd, OFString(CALLING_PRESENTATION_ADDRESS_PLACEHOLDER), (endOfStudyThroughTimeoutEvent) ? callingPresentationAddress : lastCallingPresentationAddress );
+
+  // Execute command in a new process
+  executeCommand( cmd );
+}
+
+
+static void executeOnStartOfStudy()
+    /*
+     * This function deals with the execution of the command line which was passed
+     * to option --exec-on-sostudy of the storescp. This command line is captured
+     * in opt_execOnStartOfStudy. Note that the command line can contain the placeholder
+     * PATH_PLACEHOLDER which needs to be substituted before the command line is actually executed.
+     * In detail, PATH_PLACEHOLDER will be substituted by the path to the output directory into which
+     * the files of the next study were written.
+     *
+     * Parameters:
+     *   none.
+     ==== by Zhe Liu, 2016/12/1 ==== */
+{
+  OFString cmd = opt_execOnStartOfStudy;
+
+  // perform substitution for placeholder #p; #p will be substituted by nextStudySubdirectoryPathAndName
+  cmd = replaceChars( cmd, OFString(PATH_PLACEHOLDER), nextStudySubdirectoryPathAndName );
+
+  // perform substitution for placeholder #a
+  cmd = replaceChars( cmd, OFString(CALLING_AETITLE_PLACEHOLDER), callingAETitle);
+
+  // perform substitution for placeholder #c
+  cmd = replaceChars( cmd, OFString(CALLED_AETITLE_PLACEHOLDER), calledAETitle);
+
+  // perform substitution for placeholder #r
+  cmd = replaceChars( cmd, OFString(CALLING_PRESENTATION_ADDRESS_PLACEHOLDER), callingPresentationAddress);
 
   // Execute command in a new process
   executeCommand( cmd );
