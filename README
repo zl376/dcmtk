@@ -49,3 +49,11 @@ suggested fix.  For general questions on how to compile, install or use
 the toolkit we recommend the public discussion forum at:
 
         http://forum.dcmtk.org/
+
+
+
+
+
+Acknowledgement:
+
+1. .gitignore: https://github.com/lamyj/dcmtk
