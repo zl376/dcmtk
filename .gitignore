@@ -49,6 +49,11 @@ dcmdata/apps/pdf2dcm
 dcmdata/apps/xml2dcm
 dcmdata/libsrc/mkdeftag
 dcmdata/libsrc/mkdictbi
+dcmdata/tests/i2dbmp
+dcmdata/tests/tstchval
+dcmdata/tests/tstpath
+dcmdata/tests/tstpread
+dcmdata/tests/tvrdatim
 dcmimage/apps/dcm2pnm
 dcmimage/apps/dcmquant
 dcmimage/apps/dcmscale
@@ -99,3 +104,15 @@ dcmwlm/wwwapps/preplock
 dcmwlm/wwwapps/readoviw
 dcmwlm/wwwapps/readwlst
 dcmwlm/wwwapps/writwlst
+ofstd/tests/tlist
+ofstd/tests/tmap
+ofstd/tests/tofdatim
+ofstd/tests/toffile
+ofstd/tests/tofstd
+ofstd/tests/tstatof
+ofstd/tests/tstftoa
+ofstd/tests/tstlist
+ofstd/tests/tstring
+ofstd/tests/tststack
+ofstd/tests/tstthred
+ofstd/tests/tvec
