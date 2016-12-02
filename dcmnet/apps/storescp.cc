@@ -2024,7 +2024,32 @@ storeSCPCallback(
               timeNameCounter = -1;
           }
         }
-
+        /* Now lastStudyInstanceUID == currentStudyInstanceUID, which means it is from the same exam
+           If another series come from the same exam, then the StudyInstanceUID remains the same, but the subdirectory is not there anymore
+           We need to create the same subdirectory again
+           ==== by Zhe Liu, 2015/8/1 ==== */        
+        else {
+          if( ! OFStandard::dirExists(subdirectoryPathAndName) )
+          {
+            // if it does not exist, re-create it
+            OFLOG_INFO(storescpLogger, "re-creating subdirectory for study: " << subdirectoryPathAndName);
+#ifdef HAVE_WINDOWS_H
+            if( _mkdir( subdirectoryPathAndName.c_str() ) == -1 )
+#else
+            if( mkdir( subdirectoryPathAndName.c_str(), S_IRWXU | S_IRWXG | S_IRWXO ) == -1 )
+#endif
+            {
+              OFLOG_ERROR(storescpLogger, "could not create subdirectory for study: " << subdirectoryPathAndName);
+              rsp->DimseStatus = STATUS_STORE_Error_CannotUnderstand;
+              return;
+            }
+            // all objects of the previous series have been received, so a new subdirectory is started.
+            if (opt_timeNames)
+              timeNameCounter = -1;
+          }
+        }
+        /* ==== by Zhe Liu, 2015/8/1 ==== */
+        
         // integrate subdirectory name into file name (note that cbdata->imageFileName currently contains both
         // path and file name; however, the path refers to the output directory captured in opt_outputDirectory)
         OFStandard::combineDirAndFilename(fileName, subdirectoryPathAndName, OFStandard::getFilenameFromPath(tmpStr, cbdata->imageFileName));
